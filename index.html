@@ -119,7 +119,7 @@
 
     <nav class="h-16 flex items-center justify-between px-6 glass-nav relative z-10">
         <div class="flex items-center space-x-6">
-            <div class="flex items-center space-x-3 cursor-pointer" onclick="window.location.search = ''">
+            <div class="flex items-center space-x-3 cursor-pointer" onclick="resetEditor()">
                 <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
                     <i class="fas fa-file-code text-white"></i>
                 </div>
@@ -162,7 +162,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getFirestore, doc, setDoc, getDoc, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
         const firebaseConfig = JSON.parse(__firebase_config);
         const app = initializeApp(firebaseConfig);
@@ -180,15 +180,24 @@
         let currentPasteId = null;
 
         const initAuth = async () => {
-            await signInAnonymously(auth);
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
         };
-        initAuth();
+
         onAuthStateChanged(auth, (u) => { 
             user = u; 
-            handleInitialLoad();
+            if (u) {
+                handleInitialLoad();
+            }
         });
 
+        initAuth();
+
         async function handleInitialLoad() {
+            if (!user) return;
             const params = new URLSearchParams(window.location.search);
             const id = params.get('id');
             const mode = params.get('mode');
@@ -204,7 +213,6 @@
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         
-                        // If it's a raw request (executor/script), we only want text
                         if (mode === 'raw') {
                             document.body.innerHTML = '';
                             document.body.style.background = '#0d1117';
@@ -224,7 +232,7 @@
                         document.getElementById('raw-link-btn').style.display = 'flex';
                         document.getElementById('share-link-btn').style.display = 'flex';
                     } else {
-                        alert("Paste not found.");
+                        console.error("Paste not found.");
                     }
                 } catch (e) {
                     console.error("Error loading paste:", e);
@@ -232,8 +240,13 @@
             }
         }
 
+        window.resetEditor = () => {
+            window.location.href = window.location.href.split('?')[0];
+        };
+
         window.saveToCloud = async () => {
-            if (!user || !textarea.value.trim()) return;
+            if (!user) return;
+            if (!textarea.value.trim()) return;
             
             const requestedName = nameInput.value.trim().replace(/[^a-zA-Z0-9-_]/g, '');
             const id = requestedName || Math.random().toString(36).substring(2, 10);
@@ -242,14 +255,13 @@
             saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Saving...</span>';
 
             try {
-                // Check if name is taken if it's a custom one
-                if (requestedName) {
+                if (requestedName && !currentPasteId) {
                     const checkRef = doc(db, 'artifacts', appId, 'public', 'data', 'pastes', id);
                     const checkSnap = await getDoc(checkRef);
-                    if (checkSnap.exists() && !currentPasteId) {
+                    if (checkSnap.exists()) {
                         alert("That name is already taken!");
                         saveBtn.disabled = false;
-                        saveBtn.innerHTML = 'Save Paste';
+                        saveBtn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> <span>Save Paste</span>';
                         return;
                     }
                 }
@@ -260,11 +272,11 @@
                     userId: user.uid
                 });
 
-                const newUrl = window.location.origin + window.location.pathname + '?id=' + id;
-                window.history.pushState({id}, '', newUrl);
                 currentPasteId = id;
                 nameInput.disabled = true;
                 
+                // Instead of pushState which fails in sandboxed iFrames, 
+                // we just show the copy buttons and update our local reference.
                 document.getElementById('raw-link-btn').style.display = 'flex';
                 document.getElementById('share-link-btn').style.display = 'flex';
                 
@@ -273,6 +285,9 @@
                     saveBtn.disabled = false;
                     saveBtn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> <span>Save Paste</span>';
                 }, 2000);
+                
+                // Alert the user since URL didn't change visually
+                alert("Saved successfully! Use 'Copy Share Link' to get the URL.");
             } catch (e) {
                 console.error("Error saving:", e);
                 saveBtn.disabled = false;
@@ -308,13 +323,15 @@
 
         window.copyRawLink = () => {
             if (!currentPasteId) return;
-            const url = window.location.origin + window.location.pathname + '?id=' + currentPasteId + '&mode=raw';
-            copyText(url, "Raw link copied! Perfect for executors.");
+            const baseUrl = window.location.href.split('?')[0];
+            const url = `${baseUrl}?id=${currentPasteId}&mode=raw`;
+            copyText(url, "Raw link copied!");
         };
 
         window.copyShareLink = () => {
             if (!currentPasteId) return;
-            const url = window.location.origin + window.location.pathname + '?id=' + currentPasteId;
+            const baseUrl = window.location.href.split('?')[0];
+            const url = `${baseUrl}?id=${currentPasteId}`;
             copyText(url, "Share link copied!");
         };
 
@@ -325,7 +342,12 @@
             dummy.select();
             document.execCommand('copy');
             document.body.removeChild(dummy);
-            alert(msg);
+            
+            const notify = document.createElement('div');
+            notify.className = 'fixed bottom-4 right-4 bg-blue-600 text-white px-4 py-2 rounded shadow-lg z-50';
+            notify.innerText = msg;
+            document.body.appendChild(notify);
+            setTimeout(() => notify.remove(), 2000);
         }
 
         textarea.addEventListener('scroll', () => {
