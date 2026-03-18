@@ -18,7 +18,6 @@
 
         .mono { font-family: 'JetBrains Mono', monospace; }
 
-        /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #0d1117; }
         ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
@@ -63,16 +62,17 @@
             background: #238636;
             transition: all 0.2s;
         }
-        .btn-primary:hover { background: #2ea043; transform: translateY(-1px); }
+        .btn-primary:hover:not(:disabled) { background: #2ea043; transform: translateY(-1px); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
         .btn-secondary {
             background: #21262d;
             border: 1px solid #30363d;
             transition: all 0.2s;
         }
-        .btn-secondary:hover { background: #30363d; border-color: #8b949e; }
+        .btn-secondary:hover:not(:disabled) { background: #30363d; border-color: #8b949e; }
+        .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        /* Raw View Styling */
         #raw-overlay {
             display: none;
             position: fixed;
@@ -102,26 +102,24 @@
             font-size: 12px;
             border: 1px solid #30363d;
         }
-        #raw-back-btn:hover { background: rgba(255,255,255,0.2); }
     </style>
 </head>
 <body>
 
-    <!-- Header Navigation -->
     <nav class="h-16 flex items-center justify-between px-6 glass-nav relative z-10">
-        <div class="flex items-center space-x-3">
+        <div class="flex items-center space-x-3 cursor-pointer" onclick="window.location.search = ''">
             <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
                 <i class="fas fa-file-code text-white"></i>
             </div>
             <h1 class="text-xl font-semibold tracking-tight text-white">Quick<span class="text-blue-500">Paste</span></h1>
         </div>
 
-        <div class="flex items-center space-x-3">
-            <button onclick="copyRawLink()" class="btn-secondary text-sm px-4 py-2 rounded-md flex items-center space-x-2">
+        <div id="nav-actions" class="flex items-center space-x-3">
+            <button id="raw-link-btn" style="display:none;" onclick="copyRawLink()" class="btn-secondary text-sm px-4 py-2 rounded-md flex items-center space-x-2">
                 <i class="fas fa-link"></i>
                 <span>Raw Link</span>
             </button>
-            <button onclick="copyToClipboard()" class="btn-secondary text-sm px-4 py-2 rounded-md flex items-center space-x-2">
+            <button id="share-link-btn" style="display:none;" onclick="copyShareLink()" class="btn-secondary text-sm px-4 py-2 rounded-md flex items-center space-x-2">
                 <i class="far fa-copy"></i>
                 <span>Copy Share Link</span>
             </button>
@@ -129,111 +127,163 @@
                 <i class="fas fa-terminal"></i>
                 <span>View Raw</span>
             </button>
-            <button onclick="saveAndShare()" class="btn-primary text-sm px-4 py-2 rounded-md font-medium text-white flex items-center space-x-2">
+            <button id="save-btn" onclick="saveToCloud()" class="btn-primary text-sm px-4 py-2 rounded-md font-medium text-white flex items-center space-x-2">
                 <i class="fas fa-cloud-upload-alt"></i>
                 <span>Save Paste</span>
             </button>
         </div>
     </nav>
 
-    <!-- Editor Area -->
     <main class="editor-container">
         <div id="line-numbers" class="line-numbers mono">1</div>
         <textarea id="main-textarea" class="mono" placeholder="// Paste your content here..." spellcheck="false" oninput="updateLineNumbers()"></textarea>
     </main>
 
-    <!-- Raw View Container -->
     <div id="raw-overlay"></div>
 
-    <script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'quickpaste-v1';
+
         const textarea = document.getElementById('main-textarea');
         const lineNumbers = document.getElementById('line-numbers');
         const rawOverlay = document.getElementById('raw-overlay');
+        const saveBtn = document.getElementById('save-btn');
 
-        // Check for URL hash on load
-        window.addEventListener('load', () => {
-            handleRouting();
+        let user = null;
+        let currentPasteId = null;
+
+        // Auth
+        const initAuth = async () => {
+            await signInAnonymously(auth);
+        };
+        initAuth();
+        onAuthStateChanged(auth, (u) => { 
+            user = u; 
+            handleInitialLoad();
         });
 
-        window.addEventListener('hashchange', () => {
-            handleRouting();
-        });
+        async function handleInitialLoad() {
+            const params = new URLSearchParams(window.location.search);
+            const id = params.get('id');
+            const mode = params.get('mode');
 
-        function handleRouting() {
-            const hash = window.location.hash;
-            if (hash.startsWith('#raw:')) {
-                const content = decodeURIComponent(hash.replace('#raw:', ''));
-                showRaw(content);
-            } else if (hash.length > 1) {
-                rawOverlay.style.display = 'none';
-                textarea.value = decodeURIComponent(hash.substring(1));
-                updateLineNumbers();
-            } else {
-                rawOverlay.style.display = 'none';
+            if (id) {
+                currentPasteId = id;
+                try {
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'pastes', id);
+                    const docSnap = await getDoc(docRef);
+                    
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        textarea.value = data.content;
+                        updateLineNumbers();
+                        
+                        document.getElementById('raw-link-btn').style.display = 'flex';
+                        document.getElementById('share-link-btn').style.display = 'flex';
+
+                        if (mode === 'raw') {
+                            showRaw(data.content);
+                        }
+                    } else {
+                        alert("Paste not found.");
+                    }
+                } catch (e) {
+                    console.error("Error loading paste:", e);
+                }
             }
         }
 
-        function updateLineNumbers() {
+        window.saveToCloud = async () => {
+            if (!user || !textarea.value.trim()) return;
+            
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Saving...</span>';
+
+            const id = Math.random().toString(36).substring(2, 10);
+            try {
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'pastes', id), {
+                    content: textarea.value,
+                    createdAt: Date.now(),
+                    userId: user.uid
+                });
+
+                const newUrl = window.location.origin + window.location.pathname + '?id=' + id;
+                window.history.pushState({id}, '', newUrl);
+                currentPasteId = id;
+                
+                document.getElementById('raw-link-btn').style.display = 'flex';
+                document.getElementById('share-link-btn').style.display = 'flex';
+                
+                saveBtn.innerHTML = '<i class="fas fa-check"></i> <span>Saved!</span>';
+                setTimeout(() => {
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> <span>Save Paste</span>';
+                }, 2000);
+            } catch (e) {
+                console.error("Error saving:", e);
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = 'Error!';
+            }
+        };
+
+        window.updateLineNumbers = () => {
             const lines = textarea.value.split('\n').length;
             let lineContent = '';
             for (let i = 1; i <= lines; i++) {
                 lineContent += i + '<br>';
             }
             lineNumbers.innerHTML = lineContent;
-        }
+        };
 
-        function saveAndShare() {
-            if (!textarea.value.trim()) return;
-            const content = encodeURIComponent(textarea.value);
-            window.location.hash = content;
-            
-            const btn = event.currentTarget;
-            const original = btn.innerHTML;
-            btn.innerHTML = '<i class="fas fa-check"></i> <span>Saved!</span>';
-            setTimeout(() => btn.innerHTML = original, 2000);
-        }
-
-        function toggleRaw() {
-            if (!textarea.value.trim()) return;
-            window.location.hash = 'raw:' + encodeURIComponent(textarea.value);
-        }
+        window.toggleRaw = () => {
+            showRaw(textarea.value);
+        };
 
         function showRaw(content) {
             rawOverlay.innerText = content;
             rawOverlay.style.display = 'block';
             
-            // Add a visual back button for Raw mode
             const backBtn = document.createElement('div');
             backBtn.id = 'raw-back-btn';
             backBtn.innerHTML = '← Back to Editor';
             backBtn.onclick = () => {
-                window.location.hash = encodeURIComponent(content);
+                rawOverlay.style.display = 'none';
+                if (currentPasteId) {
+                    const cleanUrl = window.location.origin + window.location.pathname + '?id=' + currentPasteId;
+                    window.history.pushState({}, '', cleanUrl);
+                }
             };
             rawOverlay.appendChild(backBtn);
         }
 
-        function copyRawLink() {
-            if (!textarea.value.trim()) return;
-            const rawUrl = window.location.origin + window.location.pathname + '#raw:' + encodeURIComponent(textarea.value);
-            copyTextToClipboard(rawUrl, 'Raw link copied!');
-        }
+        window.copyRawLink = () => {
+            if (!currentPasteId) return;
+            const url = window.location.origin + window.location.pathname + '?id=' + currentPasteId + '&mode=raw';
+            copyText(url, "Raw link copied!");
+        };
 
-        function copyToClipboard() {
-            saveAndShare();
-            copyTextToClipboard(window.location.href, 'Shareable link copied!');
-        }
+        window.copyShareLink = () => {
+            copyText(window.location.href, "Share link copied!");
+        };
 
-        function copyTextToClipboard(text, message) {
+        function copyText(text, msg) {
             const dummy = document.createElement('textarea');
             document.body.appendChild(dummy);
             dummy.value = text;
             dummy.select();
             document.execCommand('copy');
             document.body.removeChild(dummy);
-            alert(message);
+            alert(msg);
         }
 
-        // Sync scroll
         textarea.addEventListener('scroll', () => {
             lineNumbers.scrollTop = textarea.scrollTop;
         });
