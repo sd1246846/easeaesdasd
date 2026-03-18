@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuickPaste // Modern Text Sharing</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Inter:wght@300;400;600&display=swap');
+        
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0d1117; }
+        ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+        .editor-container {
+            height: calc(100vh - 64px);
+            display: flex;
+        }
+
+        .line-numbers {
+            width: 50px;
+            padding: 20px 0;
+            text-align: center;
+            background-color: #0d1117;
+            border-right: 1px solid #30363d;
+            color: #484f58;
+            font-size: 14px;
+            user-select: none;
+        }
+
+        #main-textarea {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #e6edf3;
+            padding: 20px;
+            font-size: 15px;
+            line-height: 1.6;
+            resize: none;
+        }
+
+        .glass-nav {
+            background: rgba(22, 27, 34, 0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid #30363d;
+        }
+
+        .btn-primary {
+            background: #238636;
+            transition: all 0.2s;
+        }
+        .btn-primary:hover { background: #2ea043; transform: translateY(-1px); }
+
+        .btn-secondary {
+            background: #21262d;
+            border: 1px solid #30363d;
+            transition: all 0.2s;
+        }
+        .btn-secondary:hover { background: #30363d; border-color: #8b949e; }
+
+        /* Raw View Styling */
+        #raw-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 9999;
+            padding: 20px;
+            overflow-y: auto;
+            color: #fff;
+            white-space: pre-wrap;
+            font-family: 'JetBrains Mono', monospace;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <nav class="h-16 flex items-center justify-between px-6 glass-nav relative z-10">
+        <div class="flex items-center space-x-3">
+            <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                <i class="fas fa-file-code text-white"></i>
+            </div>
+            <h1 class="text-xl font-semibold tracking-tight text-white">Quick<span class="text-blue-500">Paste</span></h1>
+        </div>
+
+        <div class="flex items-center space-x-3">
+            <button onclick="copyToClipboard()" class="btn-secondary text-sm px-4 py-2 rounded-md flex items-center space-x-2">
+                <i class="far fa-copy"></i>
+                <span>Copy Link</span>
+            </button>
+            <button onclick="toggleRaw()" class="btn-secondary text-sm px-4 py-2 rounded-md flex items-center space-x-2">
+                <i class="fas fa-terminal"></i>
+                <span>Raw</span>
+            </button>
+            <button onclick="saveAndShare()" class="btn-primary text-sm px-4 py-2 rounded-md font-medium text-white flex items-center space-x-2">
+                <i class="fas fa-cloud-upload-alt"></i>
+                <span>Save Paste</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Editor Area -->
+    <main class="editor-container">
+        <div id="line-numbers" class="line-numbers mono">1</div>
+        <textarea id="main-textarea" class="mono" placeholder="// Paste your content here..." spellcheck="false" oninput="updateLineNumbers()"></textarea>
+    </main>
+
+    <!-- Raw View Container -->
+    <div id="raw-overlay"></div>
+
+    <script>
+        const textarea = document.getElementById('main-textarea');
+        const lineNumbers = document.getElementById('line-numbers');
+        const rawOverlay = document.getElementById('raw-overlay');
+
+        // Check for URL hash on load
+        window.addEventListener('load', () => {
+            const hash = window.location.hash;
+            if (hash.startsWith('#raw:')) {
+                const content = decodeURIComponent(hash.replace('#raw:', ''));
+                showRaw(content);
+            } else if (hash.length > 1) {
+                textarea.value = decodeURIComponent(hash.substring(1));
+                updateLineNumbers();
+            }
+        });
+
+        function updateLineNumbers() {
+            const lines = textarea.value.split('\n').length;
+            let lineContent = '';
+            for (let i = 1; i <= lines; i++) {
+                lineContent += i + '<br>';
+            }
+            lineNumbers.innerHTML = lineContent;
+        }
+
+        function saveAndShare() {
+            if (!textarea.value.trim()) return;
+            const content = encodeURIComponent(textarea.value);
+            window.location.hash = content;
+            
+            // Temporary feedback
+            const btn = event.currentTarget;
+            const original = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-check"></i> <span>Saved!</span>';
+            setTimeout(() => btn.innerHTML = original, 2000);
+        }
+
+        function toggleRaw() {
+            if (!textarea.value.trim()) return;
+            const content = textarea.value;
+            showRaw(content);
+            
+            // Add a back listener
+            window.history.pushState(null, null, '#raw:' + encodeURIComponent(content));
+        }
+
+        function showRaw(content) {
+            rawOverlay.innerText = content;
+            rawOverlay.style.display = 'block';
+            
+            // Allow exiting raw view with Escape
+            const escHandler = (e) => {
+                if (e.key === 'Escape') {
+                    rawOverlay.style.display = 'none';
+                    window.location.hash = encodeURIComponent(content);
+                    document.removeEventListener('keydown', escHandler);
+                }
+            };
+            document.addEventListener('keydown', escHandler);
+        }
+
+        function copyToClipboard() {
+            saveAndShare();
+            const dummy = document.createElement('input');
+            document.body.appendChild(dummy);
+            dummy.value = window.location.href;
+            dummy.select();
+            document.execCommand('copy');
+            document.body.removeChild(dummy);
+            
+            alert('Shareable link copied to clipboard!');
+        }
+
+        // Handle Back Button from Raw view
+        window.onhashchange = () => {
+            if (!window.location.hash.startsWith('#raw:')) {
+                rawOverlay.style.display = 'none';
+            }
+        };
+
+        // Sync scroll
+        textarea.addEventListener('scroll', () => {
+            lineNumbers.scrollTop = textarea.scrollTop;
+        });
+    </script>
+</body>
+</html>
