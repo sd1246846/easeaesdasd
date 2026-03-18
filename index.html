@@ -38,6 +38,7 @@
             color: #484f58;
             font-size: 14px;
             user-select: none;
+            overflow: hidden;
         }
 
         #main-textarea {
@@ -79,14 +80,29 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: #000;
+            background: #0d1117;
             z-index: 9999;
             padding: 20px;
             overflow-y: auto;
-            color: #fff;
+            color: #e6edf3;
             white-space: pre-wrap;
             font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
         }
+
+        #raw-back-btn {
+            position: fixed;
+            top: 20px;
+            right: 40px;
+            background: rgba(255,255,255,0.1);
+            padding: 5px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 12px;
+            border: 1px solid #30363d;
+        }
+        #raw-back-btn:hover { background: rgba(255,255,255,0.2); }
     </style>
 </head>
 <body>
@@ -101,13 +117,17 @@
         </div>
 
         <div class="flex items-center space-x-3">
+            <button onclick="copyRawLink()" class="btn-secondary text-sm px-4 py-2 rounded-md flex items-center space-x-2">
+                <i class="fas fa-link"></i>
+                <span>Raw Link</span>
+            </button>
             <button onclick="copyToClipboard()" class="btn-secondary text-sm px-4 py-2 rounded-md flex items-center space-x-2">
                 <i class="far fa-copy"></i>
-                <span>Copy Link</span>
+                <span>Copy Share Link</span>
             </button>
             <button onclick="toggleRaw()" class="btn-secondary text-sm px-4 py-2 rounded-md flex items-center space-x-2">
                 <i class="fas fa-terminal"></i>
-                <span>Raw</span>
+                <span>View Raw</span>
             </button>
             <button onclick="saveAndShare()" class="btn-primary text-sm px-4 py-2 rounded-md font-medium text-white flex items-center space-x-2">
                 <i class="fas fa-cloud-upload-alt"></i>
@@ -132,15 +152,26 @@
 
         // Check for URL hash on load
         window.addEventListener('load', () => {
+            handleRouting();
+        });
+
+        window.addEventListener('hashchange', () => {
+            handleRouting();
+        });
+
+        function handleRouting() {
             const hash = window.location.hash;
             if (hash.startsWith('#raw:')) {
                 const content = decodeURIComponent(hash.replace('#raw:', ''));
                 showRaw(content);
             } else if (hash.length > 1) {
+                rawOverlay.style.display = 'none';
                 textarea.value = decodeURIComponent(hash.substring(1));
                 updateLineNumbers();
+            } else {
+                rawOverlay.style.display = 'none';
             }
-        });
+        }
 
         function updateLineNumbers() {
             const lines = textarea.value.split('\n').length;
@@ -156,7 +187,6 @@
             const content = encodeURIComponent(textarea.value);
             window.location.hash = content;
             
-            // Temporary feedback
             const btn = event.currentTarget;
             const original = btn.innerHTML;
             btn.innerHTML = '<i class="fas fa-check"></i> <span>Saved!</span>';
@@ -165,46 +195,43 @@
 
         function toggleRaw() {
             if (!textarea.value.trim()) return;
-            const content = textarea.value;
-            showRaw(content);
-            
-            // Add a back listener
-            window.history.pushState(null, null, '#raw:' + encodeURIComponent(content));
+            window.location.hash = 'raw:' + encodeURIComponent(textarea.value);
         }
 
         function showRaw(content) {
             rawOverlay.innerText = content;
             rawOverlay.style.display = 'block';
             
-            // Allow exiting raw view with Escape
-            const escHandler = (e) => {
-                if (e.key === 'Escape') {
-                    rawOverlay.style.display = 'none';
-                    window.location.hash = encodeURIComponent(content);
-                    document.removeEventListener('keydown', escHandler);
-                }
+            // Add a visual back button for Raw mode
+            const backBtn = document.createElement('div');
+            backBtn.id = 'raw-back-btn';
+            backBtn.innerHTML = '← Back to Editor';
+            backBtn.onclick = () => {
+                window.location.hash = encodeURIComponent(content);
             };
-            document.addEventListener('keydown', escHandler);
+            rawOverlay.appendChild(backBtn);
+        }
+
+        function copyRawLink() {
+            if (!textarea.value.trim()) return;
+            const rawUrl = window.location.origin + window.location.pathname + '#raw:' + encodeURIComponent(textarea.value);
+            copyTextToClipboard(rawUrl, 'Raw link copied!');
         }
 
         function copyToClipboard() {
             saveAndShare();
-            const dummy = document.createElement('input');
+            copyTextToClipboard(window.location.href, 'Shareable link copied!');
+        }
+
+        function copyTextToClipboard(text, message) {
+            const dummy = document.createElement('textarea');
             document.body.appendChild(dummy);
-            dummy.value = window.location.href;
+            dummy.value = text;
             dummy.select();
             document.execCommand('copy');
             document.body.removeChild(dummy);
-            
-            alert('Shareable link copied to clipboard!');
+            alert(message);
         }
-
-        // Handle Back Button from Raw view
-        window.onhashchange = () => {
-            if (!window.location.hash.startsWith('#raw:')) {
-                rawOverlay.style.display = 'none';
-            }
-        };
 
         // Sync scroll
         textarea.addEventListener('scroll', () => {
