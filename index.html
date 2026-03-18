@@ -162,7 +162,11 @@
 
         // Auth
         const initAuth = async () => {
-            await signInAnonymously(auth);
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
         };
         initAuth();
         onAuthStateChanged(auth, (u) => { 
@@ -266,12 +270,15 @@
 
         window.copyRawLink = () => {
             if (!currentPasteId) return;
+            // The URL only contains the ID, not the text
             const url = window.location.origin + window.location.pathname + '?id=' + currentPasteId + '&mode=raw';
             copyText(url, "Raw link copied!");
         };
 
         window.copyShareLink = () => {
-            copyText(window.location.href, "Share link copied!");
+            if (!currentPasteId) return;
+            const url = window.location.origin + window.location.pathname + '?id=' + currentPasteId;
+            copyText(url, "Share link copied!");
         };
 
         function copyText(text, msg) {
