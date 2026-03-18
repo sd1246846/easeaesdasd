@@ -73,6 +73,17 @@
         .btn-secondary:hover:not(:disabled) { background: #30363d; border-color: #8b949e; }
         .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
+        .input-dark {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            outline: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 13px;
+        }
+        .input-dark:focus { border-color: #58a6ff; }
+
         #raw-overlay {
             display: none;
             position: fixed;
@@ -107,11 +118,18 @@
 <body>
 
     <nav class="h-16 flex items-center justify-between px-6 glass-nav relative z-10">
-        <div class="flex items-center space-x-3 cursor-pointer" onclick="window.location.search = ''">
-            <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                <i class="fas fa-file-code text-white"></i>
+        <div class="flex items-center space-x-6">
+            <div class="flex items-center space-x-3 cursor-pointer" onclick="window.location.search = ''">
+                <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-file-code text-white"></i>
+                </div>
+                <h1 class="text-xl font-semibold tracking-tight text-white">Quick<span class="text-blue-500">Paste</span></h1>
             </div>
-            <h1 class="text-xl font-semibold tracking-tight text-white">Quick<span class="text-blue-500">Paste</span></h1>
+            
+            <div class="flex items-center space-x-2">
+                <span class="text-xs text-gray-500 uppercase font-bold">Paste Name:</span>
+                <input type="text" id="paste-name-input" class="input-dark w-32 mono" placeholder="random-id">
+            </div>
         </div>
 
         <div id="nav-actions" class="flex items-center space-x-3">
@@ -156,17 +174,13 @@
         const lineNumbers = document.getElementById('line-numbers');
         const rawOverlay = document.getElementById('raw-overlay');
         const saveBtn = document.getElementById('save-btn');
+        const nameInput = document.getElementById('paste-name-input');
 
         let user = null;
         let currentPasteId = null;
 
-        // Auth
         const initAuth = async () => {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-                await signInAnonymously(auth);
-            }
+            await signInAnonymously(auth);
         };
         initAuth();
         onAuthStateChanged(auth, (u) => { 
@@ -181,21 +195,34 @@
 
             if (id) {
                 currentPasteId = id;
+                nameInput.value = id;
+                nameInput.disabled = true;
                 try {
                     const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'pastes', id);
                     const docSnap = await getDoc(docRef);
                     
                     if (docSnap.exists()) {
                         const data = docSnap.data();
+                        
+                        // If it's a raw request (executor/script), we only want text
+                        if (mode === 'raw') {
+                            document.body.innerHTML = '';
+                            document.body.style.background = '#0d1117';
+                            const pre = document.createElement('pre');
+                            pre.style.padding = '20px';
+                            pre.style.color = '#e6edf3';
+                            pre.style.whiteSpace = 'pre-wrap';
+                            pre.style.fontFamily = 'monospace';
+                            pre.innerText = data.content;
+                            document.body.appendChild(pre);
+                            return;
+                        }
+
                         textarea.value = data.content;
                         updateLineNumbers();
                         
                         document.getElementById('raw-link-btn').style.display = 'flex';
                         document.getElementById('share-link-btn').style.display = 'flex';
-
-                        if (mode === 'raw') {
-                            showRaw(data.content);
-                        }
                     } else {
                         alert("Paste not found.");
                     }
@@ -208,11 +235,25 @@
         window.saveToCloud = async () => {
             if (!user || !textarea.value.trim()) return;
             
+            const requestedName = nameInput.value.trim().replace(/[^a-zA-Z0-9-_]/g, '');
+            const id = requestedName || Math.random().toString(36).substring(2, 10);
+            
             saveBtn.disabled = true;
             saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Saving...</span>';
 
-            const id = Math.random().toString(36).substring(2, 10);
             try {
+                // Check if name is taken if it's a custom one
+                if (requestedName) {
+                    const checkRef = doc(db, 'artifacts', appId, 'public', 'data', 'pastes', id);
+                    const checkSnap = await getDoc(checkRef);
+                    if (checkSnap.exists() && !currentPasteId) {
+                        alert("That name is already taken!");
+                        saveBtn.disabled = false;
+                        saveBtn.innerHTML = 'Save Paste';
+                        return;
+                    }
+                }
+
                 await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'pastes', id), {
                     content: textarea.value,
                     createdAt: Date.now(),
@@ -222,6 +263,7 @@
                 const newUrl = window.location.origin + window.location.pathname + '?id=' + id;
                 window.history.pushState({id}, '', newUrl);
                 currentPasteId = id;
+                nameInput.disabled = true;
                 
                 document.getElementById('raw-link-btn').style.display = 'flex';
                 document.getElementById('share-link-btn').style.display = 'flex';
@@ -260,19 +302,14 @@
             backBtn.innerHTML = '← Back to Editor';
             backBtn.onclick = () => {
                 rawOverlay.style.display = 'none';
-                if (currentPasteId) {
-                    const cleanUrl = window.location.origin + window.location.pathname + '?id=' + currentPasteId;
-                    window.history.pushState({}, '', cleanUrl);
-                }
             };
             rawOverlay.appendChild(backBtn);
         }
 
         window.copyRawLink = () => {
             if (!currentPasteId) return;
-            // The URL only contains the ID, not the text
             const url = window.location.origin + window.location.pathname + '?id=' + currentPasteId + '&mode=raw';
-            copyText(url, "Raw link copied!");
+            copyText(url, "Raw link copied! Perfect for executors.");
         };
 
         window.copyShareLink = () => {
